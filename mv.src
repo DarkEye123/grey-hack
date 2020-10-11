@@ -1,0 +1,68 @@
+//command: mv
+if params.len < 2 or params.len > 3 or params[0] == "-h" or params[0] == "--help" then exit(command_info("mv_usage"))
+//TODO add parent -p
+
+origFile = params[0]
+destFolder = params[1]
+
+isRecursive = false
+flags = []
+files = []
+for param in params
+	p = param.lower
+	if p[0] == "-" then flags.push(p)
+end for
+
+if flags.indexOf("-r") != null then isRecursive = true
+
+print("is recursive: " + isRecursive)
+
+programName = program_path.split("/").pop()
+computer = get_shell.host_computer	
+
+folder = computer.File(destFolder)
+
+if folder == null then
+	folderList = destFolder.split("/")
+	folderName = folderList.pop()
+	if folderName == "" then folderName = folderList.pop()
+	folderPath = folderList.join("/")
+	if folderPath == "" then folderPath = computer.current_path
+	print("creating folder: " + folderPath + "/" + folderName)
+	out = computer.create_folder(folderPath, folderName)
+	print("folder created: " + out)
+	folder = computer.File(folderPath + "/" + folderName)
+else if not folder.is_folder then
+	exit("you need a folder for the destination")
+end if
+
+if origFile.indexOf("*") != null then
+	pathList = origFile.split("\*")
+	fileName = pathList.pop()
+	parentPath = pathList.pop()
+	if parentPath == "" then parentPath = computer.current_path
+	parent = computer.File(parentPath)
+	print("parent is: " + parent.name)
+	
+	for child in parent.get_files 
+		if child.name != programName then
+			if fileName == "" or child.name.indexOf(fileName) != null then
+				child.move(folder.path, child.name)
+			end if
+		end if
+	end for
+	
+	if isRecursive then
+		for child in parent.get_folders
+			if child.path != folder.path and (fileName == "" or child.name.indexOf(fileName) != null) then
+				child.move(folder.path, child.name)
+			end if
+		end for
+	end if
+else
+	get_shell.launch("/bin/mv", origFile + " " + destFolder)
+end if
+
+
+
+
