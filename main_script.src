@@ -197,7 +197,7 @@ helpers = function ()
 
 ////////////////////////////////////////////////////////////////////////////////////
   crack_remote = function(shell=null, start_terminal=true, only_banks=true)
-    print("starting <b>crack_remote</b> only banks mode: ", only_banks)
+    print("starting <b>crack_remote</b> only banks mode: " + only_banks)
     print("assuming staff/root access")
 
     if not shell then shell = get_shell
@@ -600,7 +600,7 @@ attack = function()
   end if
 
   if typeof(result) == "file" then
-    print("obtained access to <>file</> object")
+    print("obtained access to <b>file</b> object")
     print("OWNER :" + result.owner)
     print("FILE_PATH :" + result.path)
 
@@ -631,7 +631,7 @@ attack = function()
       print("obtained <b>file</b> guest access, listing users")
       for folder in root.get_folders
         if folder.name == "home" then 
-          print("<>NOW WRITE EMAIL</>")
+          print("<b>NOW WRITE EMAIL</b>")
           for user in folder.get_folders
             print(user.name)
           end for
@@ -661,11 +661,22 @@ attack_banks = function()
   for router in routers
     if not visited.indexOf(router.local_ip) then
       visited.push(router.local_ip)
+      version = metaxploit.net_use(router.local_ip).dump_lib.version
       for ip in router.devices_lan_ip
         if not visited.indexOf(ip) and not get_router(ip) then
           visited.push(ip)
-          get_shell.launch("/home/guest/x", "attack " + router.local_ip + " 0 " + MEMORY_ADDRESS + " " + UNSECURE_VAL + " " + ip + " -p -l")
-          visited.push(router.local_ip)
+          skip_ip_cos_router = false
+          // dunno if it is bug or desired behavior .. but these ips are already in list of routers, but somehow being false when get_router is called on them
+          for port in router.device_ports(ip)
+            if port.port_number == 8080 then
+              skip_ip_cos_router = true
+            end if
+          end for
+          if not skip_ip_cos_router and version == "1.0.0" then
+            get_shell.launch("/home/guest/x", "attack " + router.local_ip + " 0 " + MEMORY_ADDRESS + " " + UNSECURE_VAL + " " + ip + " -p -l")
+          else
+            print("<mark=#949ca855>skipping: " + ip + " v" + version + "</mark>")
+          end if
         end if
       end for
     end if
