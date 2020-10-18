@@ -1,6 +1,6 @@
 // check masterkey(ip, port, user="root")
 print("*****************")
-attack_node_address = "97.90.50.232"
+attack_node_address = "84.240.61.213"
 
 if params.len == 0 then
   print("no arguments, run in <b>debug mode</b>?")
@@ -24,6 +24,7 @@ end if
     
 
 attack_node_storage_path = "/root/data"
+attack_node_meta_path = "/root/meta"
 main_node_storage_path = home_dir + "/users"
 local_computer = get_shell.host_computer
 
@@ -32,7 +33,7 @@ attack_node_shell = get_shell.connect_service(attack_node_address, 22, "root", "
 if not attack_node_shell then exit("<b>attack node is not accessible</b>")
 attack_node_computer = attack_node_shell.host_computer
 
-if not params[0] == "init" and not (params[0] == "helpers" and params[1] == "transfer_target_home") then
+if not params[0] == "init" and not (params[0] == "helpers" and params[1] != "crack_remote") and not (params[0] == "attack" and params[1].indexOf("hijack") != null) then
   metaxploit = include_lib("/lib/metaxploit.so")
   if not metaxploit then metaxploit = include_lib(local_computer.current_path + "/metaxploit.so")
   if not metaxploit then metaxploit = include_lib("/home/guest/metaxploit.so")
@@ -103,6 +104,25 @@ helpers = function ()
     attack_node_computer.File("/root/data").delete
     attack_node_computer.create_folder("/root", "data")
     attack_node_computer.create_folder("/root/data", "hacked")
+  end function
+
+////////////////////////////////////////////////////////////////////////////////////
+  generate_folder_path = function (path)
+    absolute_path = false
+    if path[0] == "/" then absolute_path = true
+    split_path = path.split("/")
+    root = local_computer.current_path
+    if absolute_path then 
+      root = "/" + split_path[1]
+      split_path = split_path[2:]
+    end if
+      
+    for folder in split_path
+      if folder != "" then
+        local_computer.create_folder(root, folder)
+        root = root + "/" + folder
+      end if
+    end for
   end function
 
 ////////////////////////////////////////////////////////////////////////////////////
@@ -199,16 +219,20 @@ helpers = function ()
   crack_remote = function(shell=null, start_terminal=true, only_banks=true)
     print("starting <b>crack_remote</b> only banks mode: " + only_banks)
     print("assuming staff/root access")
+    root_pass = null
+
+    root_pass_file = attack_node_computer.File(attack_node_storage_path + "/solved_passwd")
+    if root_pass_file then root_pass = root_pass_file.content
 
     if not shell then shell = get_shell
 
     target_computer = shell.host_computer
     passwd_file = target_computer.File("/etc/passwd")
 
-    root_pass = null
-
+    if root_pass then
+      print("using password: " + root_pass + " from cracked file")
     // i have access to passwd
-    if passwd_file and passwd_file.content then
+    else if passwd_file and passwd_file.content then
         print("obtained staff/root access")
         root_pass = locals.self.inner_crack_remote(passwd_file, shell)
     else
@@ -239,6 +263,7 @@ helpers = function ()
   hash["connect"] = @connect
   hash["root_shell"] = @root_shell
   hash["refresh_attack_node"] = @refresh_attack_node
+  hash["generate_folder_path"] = @generate_folder_path
   hash["transfer_bank_files"] = @transfer_bank_files
   hash["transfer_target_home"] = @transfer_target_home
   hash["crack_remote"] = @crack_remote
@@ -359,6 +384,9 @@ init = function()
     print("starting <b>init_main_node</b>")
     get_shell.host_computer.create_folder(home_dir, "users")
     get_shell.host_computer.create_folder(home_dir, "scripts")
+    get_shell.host_computer.create_folder(home_dir, "meta")
+
+    // stolen libraries
     locals.self.buildScripts(get_shell, get_shell.host_computer.File(home_dir + "/scripts"))
   end function
 
@@ -380,6 +408,7 @@ init = function()
     print("<b>status:</b> " + ret)
     get_shell.scp(home_dir + "/scripts", "/root", attack_node_shell)
     attack_node_computer.create_folder("/root", "data")
+    attack_node_computer.create_folder("/root", "meta")
     attack_node_computer.create_folder("/root/data", "hacked")
     locals.self.buildScripts(attack_node_shell, attack_node_computer.File("/root/scripts"))
   end function
@@ -513,174 +542,273 @@ scanner = function()
     str = str + vulnerabilities[target_node_address].description
   end for
 
-  name = user_input("give a name to your report: ...")
-  local_computer.touch(home_dir, name)
-  report = local_computer.File(home_dir + "/" + name)
-  print(str)
-  report.set_content(str)
-  print("\n type: \n Notepad.exe " + report.path)
+  name = user_input("give a name to your report: ... (default: report.txt)" )
+  path = user_input("path: ... (default: " + home_dir + "/meta/" + metalib.lib_name + "/" + metalib.version + ")" )
+
+  if name == "" then name = "report.txt"
+  if path == "" then path = home_dir + "/meta/" + metalib.lib_name + "/" + metalib.version
+  final_hash.helpers.generate_folder_path(path)
+	report_folder = local_computer.File(path)
+  // here is a bug if dest folder contains "_" .. it breaks touch, this is why I move it later
+	local_computer.touch(home_dir, name)
+	report = local_computer.File(home_dir + "/" + name)
+	report.set_content(str)
+	report.move(report_folder.path, name)
+	print(str)
+	print("\n type: \n Notepad.exe " + report_folder.path + "/" + name)
 
   return vulnerabilities
 end function
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-//////////////////////////////////////////////////////// ATTACK /////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////// ATTACKS /////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+attack = function()
+  hash = {}
+
 // USAGE: x attack IP PORT MEMORY_ADDRESS VULNERABILITY -p? -t?
 // for router use PORT == 0
 // TODO have a list of vulns available? (cache?)
 // TODO what about libs? download them? 
-attack = function()
-  apply_payload = false
-  start_terminal = false
-  use_lan_ip = false
-  lan_ip = null
-  only_banks = true
+////////////////////////////////////////////////////////////////////////////////////
+  direct = function()
+    apply_payload = false
+    start_terminal = false
+    use_lan_ip = false
+    lan_ip = null
+    only_banks = true
 
-  if flags.indexOf("-p") != null then apply_payload = true
-  if flags.indexOf("-l") != null then use_lan_ip = true
-  if flags.indexOf("-t") != null then start_terminal = true
-  if flags.indexOf("--everything") != null then only_banks = false
+    if flags.indexOf("-p") != null then apply_payload = true
+    if flags.indexOf("-l") != null then use_lan_ip = true
+    if flags.indexOf("-t") != null then start_terminal = true
+    if flags.indexOf("--everything") != null then only_banks = false
 
-  current_path = local_computer.current_path
+    current_path = local_computer.current_path
 
-  target_address = params[1]
-  port = params[2].to_int
+    target_address = params[2]
+    port = params[3].to_int
 
-  mem_address = params[3]
-  func_name = params[4]
-  if use_lan_ip then lan_ip = params[5]
+    mem_address = params[4]
+    func_name = params[5]
+    if use_lan_ip then lan_ip = params[6]
 
-  print("attacking MEM_ADDRESS: <b>" + mem_address + "</b>\nFUNC_NAME: <b>" + func_name + "</b>")
+    print("attacking MEM_ADDRESS: <b>" + mem_address + "</b>\nFUNC_NAME: <b>" + func_name + "</b>")
 
-  net_session = metaxploit.net_use( target_address, port )
-  if not net_session then exit("Error: can't connect to net session")
-  metalib = net_session.dump_lib
+    net_session = metaxploit.net_use( target_address, port )
+    if not net_session then exit("Error: can't connect to net session")
+    metalib = net_session.dump_lib
 
-  print("starting the <b>overflow</b>")
-  result = null
-  if not apply_payload then 
-    result = metalib.overflow(mem_address, func_name)
-  else
-    if not use_lan_ip then 
-      result = metalib.overflow(mem_address, func_name, "t")
+    print("starting the <b>overflow</b>")
+    result = null
+    if not apply_payload then 
+      result = metalib.overflow(mem_address, func_name)
     else
-      result = metalib.overflow(mem_address, func_name, lan_ip)
+      if not use_lan_ip then 
+        result = metalib.overflow(mem_address, func_name, "t")
+      else
+        result = metalib.overflow(mem_address, func_name, lan_ip)
+      end if
     end if
-  end if
 
-  if result == null then exit("attack didnt work")
+    if result == null then exit("attack didnt work")
 
-  print_node_users = function(target_computer)
-    print("<b>NOW WRITE EMAIL</b>")
-    home_folder = target_computer.File("/home")
-    for folder in home_folder.get_folders
-      print(folder.name)
-    end for
+    print_node_users = function(target_computer)
+      print("<b>NOW WRITE EMAIL</b>")
+      home_folder = target_computer.File("/home")
+      for folder in home_folder.get_folders
+        print(folder.name)
+      end for
+    end function
+  
+    if typeof(result) == "shell" then
+      print("obtained <b>shell</b> access")
+      final_hash.helpers.crack_remote(result, start_terminal, only_banks)
+    end if
+
+    // TODO upload server? maybe reboot will trigger its load
+    if typeof(result) == "computer" then
+      print("obtained access to <b>computer</b> object")
+      passwd_file = result.File("/etc/passwd")
+      if passwd_file and passwd_file.content then
+        final_hash.helpers.inner_crack_remote(passwd_file, get_shell)
+      else
+        print("obtained <b>computer</b> guest access")
+        final_hash.helpers.print_node_users(result)
+      end if
+
+      print("<b>transfering</b> user Bank.txt files")
+      final_hash.helpers.transfer_bank_files(result.File("/home"), result.lan_ip)
+    end if
+
+    if typeof(result) == "file" then
+      print("obtained access to <b>file</b> object")
+      print("OWNER :" + result.owner)
+      print("FILE_PATH :" + result.path)
+
+      result.chmod("o+wrx", 1)
+
+      root = result
+      while root.parent != null
+        root = root.parent
+      end while
+
+      root.chmod("o+wrx", 1)
+
+      has_pass = false
+      for folder in root.get_folders
+        if folder.name == "etc" then
+          for passwd_file in folder.get_files
+            if passwd_file.name == "passwd" then
+              if passwd_file.content then
+                final_hash.helpers.inner_crack_remote(passwd_file, get_shell)
+                has_pass = true
+              end if
+            end if
+          end for
+        end if
+      end for
+
+      if not has_pass then
+        print("obtained <b>file</b> guest access, listing users")
+        for folder in root.get_folders
+          if folder.name == "home" then 
+            print("<b>NOW WRITE EMAIL</b>")
+            for user in folder.get_folders
+              print(user.name)
+            end for
+            print("<b>transfering</b> user Bank.txt files")
+            final_hash.helpers.transfer_bank_files(folder, target_address)
+          end if
+        end for
+      end if
+    end if
+
+    print("\n" + typeof(result))
+    exit("success")
   end function
- 
-  if typeof(result) == "shell" then
-    print("obtained <b>shell</b> access")
-    final_hash.helpers.crack_remote(result, start_terminal, only_banks)
-  end if
 
-  // TODO upload server? maybe reboot will trigger its load
-  if typeof(result) == "computer" then
-    print("obtained access to <b>computer</b> object")
-    passwd_file = result.File("/etc/passwd")
-    if passwd_file and passwd_file.content then
-      final_hash.helpers.inner_crack_remote(passwd_file, get_shell)
-    else
-      print("obtained <b>computer</b> guest access")
-      final_hash.helpers.print_node_users(result)
-    end if
+  gather_routers = function()
+    routers = []
+    for ip in get_router.devices_lan_ip
+      router = get_router(ip)
+      if not router then router = get_switch(ip)
+      if router then routers.push(router)
+    end for
+    return routers
+  end function
 
-    print("<b>transfering</b> user Bank.txt files")
-    final_hash.helpers.transfer_bank_files(result.File("/home"), result.lan_ip)
-  end if
+////////////////////////////////////////////////////////////////////////////////////
+// it assumes you are on the router already
+  banks = function()
+    MEMORY_ADDRESS = "0x59E774DC"
+    UNSECURE_VAL = "groupalpha"
+    routers = locals.self.gather_routers
+    visited = []
 
-  if typeof(result) == "file" then
-    print("obtained access to <b>file</b> object")
-    print("OWNER :" + result.owner)
-    print("FILE_PATH :" + result.path)
+    for router in routers
+      if not visited.indexOf(router.local_ip) then
+        visited.push(router.local_ip)
+        version = metaxploit.net_use(router.local_ip).dump_lib.version
 
-    result.chmod("o+wrx", 1)
+        for ip in router.devices_lan_ip
+          if not visited.indexOf(ip) and not get_router(ip) and not get_switch(ip) then
+            visited.push(ip)
 
-    root = result
-    while root.parent != null
-      root = root.parent
-    end while
-
-    root.chmod("o+wrx", 1)
-
-    has_pass = false
-    for folder in root.get_folders
-      if folder.name == "etc" then
-        for passwd_file in folder.get_files
-          if passwd_file.name == "passwd" then
-            if passwd_file.content then
-              final_hash.helpers.inner_crack_remote(passwd_file, get_shell)
-              has_pass = true
+            if version == "2.3.6" then
+              print("<mark=#949ca855>stealing bank accounts from: " + ip + "</mark>")
+              ret = get_shell.launch("/home/guest/x", "attack direct " + router.local_ip + " 0 " + MEMORY_ADDRESS + " " + UNSECURE_VAL + " " + ip + " -p -l")
+            else
+              print("<mark=#949ca855>skipping: " + ip + " v" + version + "</mark>")
             end if
           end if
         end for
       end if
     end for
+  end function
 
-    if not has_pass then
-      print("obtained <b>file</b> guest access, listing users")
-      for folder in root.get_folders
-        if folder.name == "home" then 
-          print("<b>NOW WRITE EMAIL</b>")
-          for user in folder.get_folders
-            print(user.name)
-          end for
-          print("<b>transfering</b> user Bank.txt files")
-          final_hash.helpers.transfer_bank_files(folder, target_address)
+////////////////////////////////////////////////////////////////////////////////////
+// this needs to be called from initialized router to spread to other routers
+  pwn_routers = function()
+    print("starting <b>pwn_routers</b>")
+    root_pass_file = attack_node_computer.File(attack_node_storage_path + "/solved_passwd")
+    if not root_pass_file then exit("<mark=#949ca855>cracked root pass is missing</mark>")
+
+    MEMORY_ADDRESS = "0x59E774DC"
+    UNSECURE_VAL = "comme"
+    routers = locals.self.gather_routers
+    visited = []
+
+    for router in routers
+      if not visited.indexOf(router.local_ip) then
+        visited.push(router.local_ip)
+        metalib = metaxploit.net_use(router.local_ip).dump_lib
+
+        if metalib.version != "1.0.0" then
+          print("<b>strarting hijack of router/switch with ip: " + router.local_ip + "</b>")
+          result = metalib.overflow(MEMORY_ADDRESS, UNSECURE_VAL)
+          if not result then exit("<mark=#949ca855>Exploit doesn't work</mark>")
+          if not typeof(result) == "shell" then exit("<mark=#949ca855>Result is not shell, but: " + typeof(result) + "</mark>")
+          print("copying attack script to router...")
+          attack_node_shell.scp("/bin/x", "/home/guest", result)
+          result.launch("/home/guest/x", "attack router_hijack " + metalib.lib_name + " " + metalib.version + " 1.0.0")
         end if
-      end for
-    end if
-  end if
+      end if
+    end for
+  end function
 
-  print("\n" + typeof(result))
-		
-end function
+////////////////////////////////////////////////////////////////////////////////////
+// attack doesn't go from attack_node directly
+// passing lib name and version is faster than uploading metasploit.so and loading it
+// TODO some routers support LogViewer.exe, add uploading of it if passive traces occur
+  router_hijack = function()
+    print("starting <b>router_hijack</b>")
+    root_pass_file = attack_node_computer.File(attack_node_storage_path + "/solved_passwd")
+    if not root_pass_file then exit("<mark=#949ca855>cracked root pass is missing</mark>")
+    if params.len < 4 then exit("<mark=#949ca855>Expecting lib_name and version</mark>")
 
-// it assumes you are on the router already
-// TODO while cycle needed -- router can be conencted to other routers
-attack_banks = function()
-  MEMORY_ADDRESS = "0x2FC3D7D"
-  UNSECURE_VAL = "code"
-  routers = []
-  visited = []
-  // this list even main router as lan_ip
-  for ip in get_router.devices_lan_ip
-    router = get_router(ip)
-    if router then routers.push(router)
-  end for
-  for router in routers
-    if not visited.indexOf(router.local_ip) then
-      visited.push(router.local_ip)
-      version = metaxploit.net_use(router.local_ip).dump_lib.version
-      for ip in router.devices_lan_ip
-        if not visited.indexOf(ip) and not get_router(ip) then
-          visited.push(ip)
-          skip_ip_cos_router = false
-          // dunno if it is bug or desired behavior .. but these ips are already in list of routers, but somehow being false when get_router is called on them
-          for port in router.device_ports(ip)
-            if port.port_number == 8080 then
-              skip_ip_cos_router = true
-            end if
-          end for
-          if not skip_ip_cos_router and version == "1.0.0" then
-            get_shell.launch("/home/guest/x", "attack " + router.local_ip + " 0 " + MEMORY_ADDRESS + " " + UNSECURE_VAL + " " + ip + " -p -l")
-          else
-            print("<mark=#949ca855>skipping: " + ip + " v" + version + "</mark>")
-          end if
-        end if
-      end for
+    // now I'm root with local shell on the router, not attack node
+    lib_name = params[2]
+    version = params[3]
+
+    upload_version = "1.0.0"
+    if params.len > 4 then upload_version = params[4]
+
+    shell = get_shell("root", root_pass_file.content)
+
+    // TODO this could be separate universal script, though I have no use for it now elsewhere
+    attack_lib_folder = attack_node_computer.File(attack_node_meta_path + "/" + lib_name)
+    if not attack_lib_folder then 
+      attack_node_computer.create_folder(attack_node_meta_path, lib_name)
+      attack_lib_folder = attack_node_computer.File(attack_node_meta_path + "/" + lib_name)
     end if
-  end for
+
+    specific_attack_lib_folder = attack_node_computer.File(attack_lib_folder.path + "/" + version)
+    if not specific_attack_lib_folder then 
+      attack_node_computer.create_folder(attack_lib_folder.path, version)
+      specific_attack_lib_folder = attack_node_computer.File(attack_lib_folder.path + "/" + version)
+    end if
+
+    owned_lib_file = attack_node_computer.File(specific_attack_lib_folder.path + "/" + lib_name)
+    if not owned_lib_file then
+      print("<mark=#949ca855>stealing lib: " + lib_name + " v" + version + " from target</mark>")
+      ret = shell.scp("/lib/" + lib_name, specific_attack_lib_folder.path, attack_node_shell)
+      print("success? " + ret)
+    end if
+
+    upload_file = attack_node_computer.File(attack_lib_folder.path + "/" + upload_version + "/" + lib_name)
+    if not upload_file then exit("<mark=#949ca855>fail: upload " + lib_name + " of version: " + upload_version + " doesn't exist</mark>")
+    print("<mark=#949ca855>uploading lib: " + lib_name + " v" + upload_version + " to target</mark>")
+    ret = attack_node_shell.scp(upload_file.path, "/lib", shell)
+    exit("success? " + ret)
+  end function
+
+  hash["direct"] = @direct
+  hash["banks"] = @banks
+  hash["gather_routers"] = @gather_routers
+  hash["pwn_routers"] = @pwn_routers
+  hash["router_hijack"] = @router_hijack
+
+  return hash
 end function
 
 
@@ -706,8 +834,11 @@ end function
 //  "target"
 //  "update"
 
-// attack
-// attack_banks
+// ATTACK 
+//  direct
+//  banks
+//  pwn_routers
+//  router_hijack
 
 final_hash["helpers"] = helpers
 final_hash["decipher"] = decipher
@@ -715,13 +846,8 @@ final_hash["bank"] = bank
 final_hash["init"] = init
 final_hash["scanner"] = @scanner
 final_hash["attack"] = @attack
-final_hash["attack_banks"] = @attack_banks
 
-
-is_attack = params[0].indexOf("attack")
-if is_attack == 0 then is_attack = true
-
-if params[0] != "scanner" and (not is_attack) then
+if params[0] != "scanner" then
 	final_hash[params[0]][params[1]]
 else
 	final_hash[params[0]]
