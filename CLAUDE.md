@@ -1,0 +1,1 @@
+- read @trigger.md and all referenced files from it
