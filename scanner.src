@@ -1,0 +1,234 @@
+// Grey Hack Vulnerability Scanner
+// Scans vulnerabilities and performs overflow attacks
+
+// Reusable function for parsing vulnerability text
+parseVulnerabilityText = function(description)
+	overflow_functions = []
+	
+	// Find all text between <b> and </b> tags
+	start_pos = 0
+	while true
+		// Find next <b> tag
+		b_start = description.indexOf("<b>", start_pos)
+		if b_start == null then break
+		
+		// Find corresponding </b> tag
+		b_end = description.indexOf("</b>", b_start + 3)
+		if b_end == null then break
+		
+		// Extract text between tags
+		function_name = description[b_start + 3:b_end]
+		if function_name.len > 0 then
+			overflow_functions.push function_name
+		end if
+		
+		// Move past this </b> tag for next search
+		start_pos = b_end + 4
+	end while
+	
+	return overflow_functions
+end function
+
+// Full scanner function
+scanner = function(target_ip, target_port)
+	print "Starting <b>vulnerability scanner</b> for " + target_ip + ":" + target_port
+
+	// Load metaxploit library (try /lib first, then current_path)
+	metaxploit = include_lib("/lib/metaxploit.so")
+	if not metaxploit then
+		metaxploit = include_lib(current_path + "/metaxploit.so")
+		if not metaxploit then
+			print "Error: Cannot load metaxploit library from /lib or " + current_path
+			return 
+		end if
+	end if
+
+	// Connect to target
+	net_session = metaxploit.net_use(target_ip, target_port.to_int)
+	if not net_session then
+		print "Error: Cannot connect to " + target_ip + ":" + target_port
+		return 
+	end if
+
+	// Get library information
+	metalib = net_session.dump_lib
+	if not metalib then
+		print "Error: Cannot dump library from target"
+		return 
+	end if
+
+	print "Target library: " + metalib.lib_name + " " + metalib.version
+
+	// Find vulnerable addresses
+	vulnerable_addresses = metaxploit.scan(metalib)
+	if not vulnerable_addresses then
+		print "No vulnerabilities found"
+		return 
+	end if
+
+	print "Found " + vulnerable_addresses.len + " vulnerable addresses"
+
+	// Create folder for target IP (handle existing folder)
+	ip_folder = current_path + "/" + target_ip
+	folder_check = get_shell.host_computer.File(ip_folder)
+	if not folder_check then
+		folder_result = get_shell.host_computer.create_folder(current_path, target_ip)
+		if typeof(folder_result) == "string" then
+			print "Error creating folder: " + folder_result
+			return 
+		end if
+	end if
+
+	// Create human-readable scan results file
+	scan_filename = metalib.lib_name + "_" + metalib.version + ".txt"
+	scan_full_path = ip_folder + "/" + scan_filename
+	
+	// Create scan results file (handle existing file)
+	scan_file = get_shell.host_computer.File(scan_full_path)
+	if not scan_file then
+		touch_result = get_shell.host_computer.touch(ip_folder, scan_filename)
+		if not touch_result then
+			print "Error: Could not create scan file: " + scan_full_path
+			return 
+		end if
+		scan_file = get_shell.host_computer.File(scan_full_path)
+		if not scan_file then
+			print "Error: Could not access created scan file: " + scan_full_path
+			return 
+		end if
+	end if
+
+	// Create attack results file
+	attack_filename = target_port + "_result.txt"
+	attack_full_path = ip_folder + "/" + attack_filename
+
+	// Create attack file (handle existing file)
+	attack_file = get_shell.host_computer.File(attack_full_path)
+	if not attack_file then
+		touch_result = get_shell.host_computer.touch(ip_folder, attack_filename)
+		if not touch_result then
+			print "Error: Could not create attack file: " + attack_full_path
+			return 
+		end if
+		attack_file = get_shell.host_computer.File(attack_full_path)
+		if not attack_file then
+			print "Error: Could not access created attack file: " + attack_full_path
+			return 
+		end if
+	end if
+
+	// Scan all vulnerable addresses and perform overflow attacks
+	scan_content = ""
+	attack_content = ""
+
+	for address in vulnerable_addresses
+		print "Scanning address: " + address
+
+		// Get vulnerability description
+		description = metaxploit.scan_address(metalib, address)
+		if description then
+			// Add scan results to human-readable file
+			scan_content = scan_content + "=== Memory Address: " + address + " ===" + char(10)
+			scan_content = scan_content + description + char(10)
+			scan_content = scan_content + char(10)
+			
+			// Parse overflow functions from description
+			overflow_funcs = parseVulnerabilityText(description)
+
+			// Perform overflow for each address_place
+			for address_place in overflow_funcs
+				print "Attempting overflow on: " + address_place
+
+				// Perform overflow attack
+				overflow_result = metalib.overflow(address, address_place)
+				result_type = typeof(overflow_result)
+
+				// Format: address:address_place:message:typeof(result)
+				result_line = address + ":" + address_place + ":" + overflow_result + ":" + result_type
+				attack_content = attack_content + result_line + char(10)
+				print result_line
+			end for
+		end if
+	end for
+
+	// Write both files
+	scan_file.set_content scan_content
+	attack_file.set_content attack_content
+	
+	print "Scan results saved to: " + scan_full_path
+	print "Attack results saved to: " + attack_full_path
+
+	return attack_content
+end function
+
+// Direct address scanner function
+direct_address_scan = function(target_ip, target_port, memory_address)
+	print "Direct address scan for " + target_ip + ":" + target_port + " at " + memory_address
+
+	// Load metaxploit library (try /lib first, then current_path)
+	metaxploit = include_lib("/lib/metaxploit.so")
+	if not metaxploit then
+		metaxploit = include_lib(current_path + "/metaxploit.so")
+		if not metaxploit then
+			print "Error: Cannot load metaxploit library from /lib or " + current_path
+			return 
+		end if
+	end if
+
+	// Connect to target
+	net_session = metaxploit.net_use(target_ip, target_port.to_int)
+	if not net_session then
+		print "Error: Cannot connect to " + target_ip + ":" + target_port
+		return 
+	end if
+
+	// Get library information
+	metalib = net_session.dump_lib
+	if not metalib then
+		print "Error: Cannot dump library from target"
+		return 
+	end if
+
+	// Scan specific address
+	description = metaxploit.scan_address(metalib, memory_address)
+	if description then
+		print "Vulnerability details for " + memory_address + ":"
+		print description
+	else
+		print "No vulnerability found at address: " + memory_address
+	end if
+end function
+
+// Main execution
+if params.len == 2 then
+	// Standard mode: IP PORT
+	target_ip = params[0]
+	target_port = params[1]
+
+	print "Grey Hack Vulnerability Scanner v2.0"
+	print "Scanning " + target_ip + ":" + target_port
+	print ""
+
+	results = scanner(target_ip, target_port)
+
+else if params.len == 3 then
+	// Direct address mode: IP PORT ADDRESS
+	target_ip = params[0]
+	target_port = params[1]
+	memory_address = params[2]
+
+	print "Grey Hack Vulnerability Scanner v2.0 - Direct Address Mode"
+	print "Scanning " + target_ip + ":" + target_port + " at address " + memory_address
+	print ""
+
+	direct_address_scan target_ip, target_port, memory_address
+
+else
+	print "Usage:"
+	print "  scanner <IP> <PORT>                    - Full vulnerability scan"
+	print "  scanner <IP> <PORT> <ADDRESS>          - Direct address scan"
+	print "Examples:"
+	print "  scanner 192.168.1.100 22"
+	print "  scanner 192.168.1.100 22 0x7BFC1EAA"
+	exit
+end if
