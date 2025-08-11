@@ -1,0 +1,3 @@
+
+// game is buggy as hell and relative imports are not working at all
+get_shell.build current_path + "/" + params[0], current_path
