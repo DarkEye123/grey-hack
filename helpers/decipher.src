@@ -1,0 +1,7 @@
+// because in-game decipher is not working for simple passwords
+
+crypto = include_lib("/libs/crypto.so")
+
+result = crypto.decipher(user_input("password: "))
+
+print result
