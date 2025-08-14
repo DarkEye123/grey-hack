@@ -43,6 +43,12 @@ GreyScript is a custom fork of MiniScript, specifically designed for Grey Hack. 
 - **String split() requires escaped special characters** - use `"\."` not `"."` for dot separation
 - **Only double quotes supported** - no single quotes `'` allowed, only double quotes `"`
 - **JSON construction** - use `char(34)` for quote characters when building JSON strings
+- **File type checking** - use `file.is_folder`, `file.is_binary`, `file.is_symlink` (NO `file.is_file`!)
+- **User input function** - use `user_input("prompt")` (NOT `input()`)
+- **SSH connections** - use `get_shell.connect_service(ip, port, user, pass)` (NO service name parameter)
+- **No connection closing** - connections are auto-managed (NO `shell.close()` method)
+- **Crypto operations** - use `crypto.decipher(hash)` from library (NOT `/bin/decipher` tool)
+- **No compound assignment** - use `i = i + 1` (NOT `i += 1`, `i++`, etc.)
 
 ### Variables and Scope:
 ```greyscript
@@ -129,6 +135,7 @@ This comprehensive reference contains:
 current_path        // Returns current directory path
 get_shell          // Returns current shell object
 get_router         // Returns router object
+user_input("prompt") // Gets user input with optional prompt (NOT input!)
 ```
 
 ### Library Loading Patterns:
@@ -175,10 +182,10 @@ password = crypto.aircrack("/tmp/file.cap")
 
 ### Basic File Operations:
 ```greyscript
-// Read a file
+// Read a file (check if it's NOT a folder to confirm it's a file)
 comp = get_shell.host_computer
 file = comp.File("/etc/passwd")
-if file and file.is_file then
+if file and not file.is_folder then
     content = file.get_content
     print content
 end if
@@ -190,6 +197,107 @@ if touch_result then
     file = comp.File("/tmp/output.txt")
     file.set_content("Hello Grey Hack!")
 end if
+```
+
+### Recursive File Search:
+```greyscript
+// Recursively find all files with specific extensions
+find_files_recursive = function(folder, target_extensions)
+    all_files = []
+    
+    if not folder or not folder.is_folder then
+        return all_files
+    end if
+    
+    // Get files in current directory
+    files = folder.get_files
+    for file in files
+        if not file.is_folder then
+            file_name = file.name
+            for ext in target_extensions
+                if file_name.len >= ext.len and file_name[-ext.len:] == ext then
+                    all_files.push file
+                    break
+                end if
+            end for
+        end if
+    end for
+    
+    // Recursively search subdirectories
+    subfolders = folder.get_folders
+    for subfolder in subfolders
+        subfolder_files = find_files_recursive(subfolder, target_extensions)
+        for subfile in subfolder_files
+            all_files.push subfile
+        end for
+    end for
+    
+    return all_files
+end function
+
+// Usage example
+comp = get_shell.host_computer
+home_dir = comp.File("/home/username")
+extensions = [".txt", ".log", ".pdf"]
+found_files = find_files_recursive(home_dir, extensions)
+print "Found " + found_files.len + " files"
+```
+
+### File Type Checking:
+```greyscript
+// Available file type methods (NO file.is_file!)
+file = comp.File("/some/path")
+if file then
+    if file.is_folder then
+        print "This is a directory"
+    else if file.is_binary then
+        print "This is a binary file"
+    else if file.is_symlink then
+        print "This is a symbolic link"
+    else
+        print "This is a regular text file"
+    end if
+end if
+
+// Check if it's a regular file (not directory)
+if file and not file.is_folder then
+    print "This is a file (not directory)"
+end if
+```
+
+### File Extension Checking:
+```greyscript
+// CORRECT way to check file extensions (check ending, not indexOf)
+filename = "document.txt"
+extension = ".txt"
+
+// Right way - check if filename ends with extension
+if filename.len >= extension.len and filename[-extension.len:] == extension then
+    print "File has .txt extension"
+end if
+
+// WRONG way - don't use indexOf for extensions
+// if filename.indexOf(".txt") != null then  // This matches anywhere in filename!
+
+// Multiple extensions check
+extensions = [".log", ".pdf", ".txt"]
+for ext in extensions
+    if filename.len >= ext.len and filename[-ext.len:] == ext then
+        print "Found extension: " + ext
+        break
+    end if
+end for
+```
+
+### User Input:
+```greyscript
+// Get user input (use user_input, NOT input!)
+target_ip = user_input("Enter target IP: ").trim
+if target_ip == "" then target_ip = "127.0.0.1"
+
+// User input with default values
+username = user_input("Username [admin]: ").trim
+if username == "" then username = "admin"
 ```
 
 ### Network Scanning:
@@ -220,16 +328,17 @@ end for
 
 ### SSH Connection:
 ```greyscript
-// Connect via SSH
+// Connect via SSH (NO service name parameter!)
 target_ip = "192.168.1.100"
 username = "admin"
 password = "password123"
 
-ssh = get_shell.connect_service(target_ip, 22, "ssh", username, password)
+ssh = get_shell.connect_service(target_ip, 22, username, password)
 if ssh then
     print "Connected successfully!"
     remote_comp = ssh.host_computer
     // Perform operations on remote system
+    // Note: No need to close connections in GreyScript
 else
     print "Connection failed"
 end if
@@ -250,6 +359,51 @@ if crypto then
         end if
     end if
 end if
+```
+
+### Crypto Operations:
+```greyscript
+// Load crypto library (LOCAL EXECUTION ONLY!)
+crypto = include_lib("/lib/crypto.so")
+if not crypto then
+    crypto = include_lib(current_path + "/crypto.so")
+    if not crypto then
+        print "Error: Cannot load crypto library"
+        exit
+    end if
+end if
+
+// Decipher encrypted passwords (use crypto.decipher, NOT /bin/decipher tool!)
+encrypted_password = "a2adcc53867a473ab9dd32c33fc22b9b"
+decrypted_password = crypto.decipher(encrypted_password)
+if decrypted_password then
+    print "Decrypted: " + decrypted_password
+else
+    print "Decipher failed"
+end if
+
+// Other crypto operations
+hash_result = crypto.md5("plaintext")
+password_cracked = crypto.aircrack("/tmp/capture.cap")
+```
+
+### Remote/Local Script Architecture:
+```greyscript
+// IMPORTANT: crypto.so can only be loaded where script executes!
+// For remote operations, split into local command execution:
+
+// On compromised machine (steal.src):
+// 1. Download files to attack node
+// 2. Launch local command via remote shell
+crack_shell = get_shell.connect_service(attack_ip, 22, user, pass)
+crack_result = crack_shell.launch("/usr/bin/crack")
+
+// On attack node (crack.src):
+// 1. Load crypto library locally
+crypto = include_lib("/lib/crypto.so")
+// 2. Process files with crypto operations
+decipher_result = crypto.decipher(encrypted_pass)
+// 3. Save results to local files
 ```
 
 ## CURRENT LIMITATIONS AND ISSUES (v0.9.5694)
@@ -329,6 +483,34 @@ end if
 5. Implement proper retry mechanisms
 6. Monitor resource usage
 
+## GAME ENVIRONMENT CONTEXT
+
+**CRITICAL REMINDER: Grey Hack is a GAME, not real-life production software**
+
+### Game-Appropriate Development Practices:
+1. **No Enterprise Features Unless Requested**: Do not automatically add production-level features like:
+   - Connection retry logic with exponential backoff
+   - Comprehensive input validation systems  
+   - Advanced logging and monitoring
+   - Complex error recovery mechanisms
+   - Performance optimization for scale
+
+2. **Assume Game Environment Stability**: 
+   - Desktop directories always exist
+   - Basic file operations work reliably
+   - Network connections are generally stable within game context
+   - System utilities function as expected
+
+3. **Focus on Functionality Over Robustness**: 
+   - Implement what was requested, not what would be needed in production
+   - Basic error handling is sufficient unless specifically asked for more
+   - Game scenarios don't require defensive programming against edge cases
+
+4. **Only Add Advanced Features When Asked**: 
+   - Users will explicitly request enterprise features if needed
+   - Don't assume real-world deployment requirements
+   - Keep solutions appropriate for gaming context
+
 ## EXPERT GUIDELINES
 
 When helping users with Grey Hack:
@@ -336,9 +518,10 @@ When helping users with Grey Hack:
 2. Explain potential security implications
 3. Mention current limitations that might affect their code
 4. Suggest alternative approaches when primary method fails
-5. Include error handling in all examples
+5. Include basic error handling appropriate for game context
 6. Reference specific API methods and their parameters
 7. Consider the game's detection systems in script design
 8. Provide both beginner and advanced solution approaches
+9. **Remember this is a GAME**: Don't over-engineer solutions with production-level features unless specifically requested
 
-Remember: You are an expert in Grey Hack v0.9.5694 and GreyScript programming. Use this comprehensive knowledge to provide accurate, practical, and secure solutions for all Grey Hack-related queries.
+Remember: You are an expert in Grey Hack v0.9.5694 and GreyScript programming. Use this comprehensive knowledge to provide accurate, practical, and game-appropriate solutions for all Grey Hack-related queries.

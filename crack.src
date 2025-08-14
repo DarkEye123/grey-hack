@@ -1,0 +1,205 @@
+// crack.src - Credential cracking utility for Grey Hack attack node
+// Usage: Install as /usr/bin/crack on attack node
+// Author: AI Assistant for Grey Hack operations
+
+print "=== Grey Hack Credential Cracking Tool ==="
+
+// Get target path from command line argument
+if params.len == 0 then
+	print "Usage: crack <target_path>"
+	print "Example: crack /home/darkeye/hacked/1.2.3.4/192.168.1.100/"
+	exit
+end if
+
+target_path = params[0]
+print "Processing target: " + target_path
+
+// ===== UTILITY FUNCTIONS =====
+
+// Safe file creation
+safe_touch = function(comp, dir_path, filename)
+	result = comp.touch(dir_path, filename)
+	if result then
+		return comp.File(dir_path + "/" + filename)
+	end if
+	return null
+end function
+
+// Recursive search for Mail.txt and Bank.txt files
+find_credential_files = function(folder)
+	all_files = []
+	
+	if not folder or not folder.is_folder then
+		return all_files
+	end if
+	
+	// Get files in current directory
+	files = folder.get_files
+	for file in files
+		if not file.is_folder then
+			file_name = file.name
+			if file_name == "Mail.txt" or file_name == "Bank.txt" then
+				all_files.push file
+			end if
+		end if
+	end for
+	
+	// Recursively search subdirectories
+	subfolders = folder.get_folders
+	for subfolder in subfolders
+		subfolder_files = find_credential_files(subfolder)
+		for subfile in subfolder_files
+			all_files.push subfile
+		end for
+	end for
+	
+	return all_files
+end function
+
+// ===== MAIN EXECUTION =====
+
+// Load crypto library (only works on attack node where script executes)
+print "[1/4] Loading crypto library..."
+crypto = include_lib("/lib/crypto.so")
+if not crypto then
+	crypto = include_lib(current_path + "/crypto.so")
+	if not crypto then
+		print "ERROR: Cannot load crypto library. Exiting."
+		exit
+	end if
+end if
+print "Crypto library loaded successfully"
+
+// Get local computer for file operations
+comp = get_shell.host_computer
+if not comp then
+	print "ERROR: Cannot access local computer. Exiting."
+	exit
+end if
+
+// Find all credential files in target directory only
+print "[2/4] Searching for Mail.txt and Bank.txt files in target path..."
+target_dir = comp.File(target_path)
+if not target_dir or not target_dir.is_folder then
+	print "ERROR: Target directory not found: " + target_path
+	exit
+end if
+
+credential_files = find_credential_files(target_dir)
+print "Found " + credential_files.len + " credential files to process"
+
+if credential_files.len == 0 then
+	print "No credential files found. Exiting."
+	exit
+end if
+
+// Process credential files
+print "[3/4] Processing credential files..."
+
+mail_entries = []
+bank_entries = []
+
+for file in credential_files
+	file_name = file.name
+	file_path = file.path
+	print "  Processing: " + file_path
+	
+	content = file.get_content
+	if content then
+		lines = content.split(char(10))
+		
+		for line in lines
+			line = line.trim
+			if line != "" and line.indexOf(":") != null then
+				parts = line.split(":")
+				if parts.len >= 2 then
+					credential = parts[0]
+					encrypted_pass = parts[1]
+					
+					// Use crypto.decipher to decode password
+					decipher_result = crypto.decipher(encrypted_pass)
+					
+					if typeof(decipher_result) != "null" and decipher_result != null then
+						decoded_line = credential + ":" + decipher_result.trim
+						
+						if file_name == "Mail.txt" then
+							mail_entries.push decoded_line
+							print "    Mail decoded: " + credential
+						else if file_name == "Bank.txt" then
+							bank_entries.push decoded_line
+							print "    Bank decoded: " + credential
+						end if
+					else
+						print "    WARNING: Decipher failed for: " + credential
+					end if
+				end if
+			end if
+		end for
+	else
+		print "    ERROR: Failed to read file content"
+	end if
+end for
+
+print "Processed " + (mail_entries.len + bank_entries.len) + " credentials total"
+
+// Update credential files on Desktop
+print "[4/4] Updating credential files..."
+
+// Read existing content from Desktop files
+mail_file = comp.File("/home/darkeye/Desktop/mails")
+bank_file = comp.File("/home/darkeye/Desktop/banks")
+
+existing_mail_content = ""
+existing_bank_content = ""
+
+if mail_file and not mail_file.is_folder then
+	existing_mail_content = mail_file.get_content
+	if not existing_mail_content then existing_mail_content = ""
+end if
+
+if bank_file and not bank_file.is_folder then
+	existing_bank_content = bank_file.get_content
+	if not existing_bank_content then existing_bank_content = ""
+end if
+
+// Append new entries
+new_mail_content = existing_mail_content
+new_bank_content = existing_bank_content
+
+for entry in mail_entries
+	new_mail_content = new_mail_content + entry + char(10)
+end for
+
+for entry in bank_entries
+	new_bank_content = new_bank_content + entry + char(10)
+end for
+
+// Write updated content back to files
+if mail_entries.len > 0 then
+	if not mail_file then
+		mail_file = safe_touch(comp, "/home/darkeye/Desktop", "mails")
+	end if
+	if mail_file then
+		mail_file.set_content new_mail_content
+		print "Updated mail credentials file with " + mail_entries.len + " new entries"
+	else
+		print "ERROR: Failed to create/update mail credentials file"
+	end if
+end if
+
+if bank_entries.len > 0 then
+	if not bank_file then
+		bank_file = safe_touch(comp, "/home/darkeye/Desktop", "banks")
+	end if
+	if bank_file then
+		bank_file.set_content new_bank_content
+		print "Updated bank credentials file with " + bank_entries.len + " new entries"
+	else
+		print "ERROR: Failed to create/update bank credentials file"
+	end if
+end if
+
+print "=== Credential cracking completed successfully ==="
+print "Mail entries processed: " + mail_entries.len
+print "Bank entries processed: " + bank_entries.len
+print "Check /home/darkeye/Desktop/mails and /home/darkeye/Desktop/banks for results"
