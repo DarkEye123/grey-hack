@@ -387,14 +387,47 @@ hash_result = crypto.md5("plaintext")
 password_cracked = crypto.aircrack("/tmp/capture.cap")
 ```
 
+### File Upload from Attack Node (SCP):
+```greyscript
+// Upload tools from attack node using SCP (for binary files)
+upload_shell = get_shell.connect_service(attack_ip, 22, user, pass)
+if not upload_shell then
+    print "Error: Cannot connect to attack node"
+    exit
+end if
+
+// Get local shell for SCP target
+local_shell = get_shell
+
+// Upload reverse shell program
+// scp(file: string, folder: string, remoteShell: shell)
+rshell_result = upload_shell.scp("/home/darkeye/reverse_shell", "/root/Downloads", local_shell)
+if rshell_result then
+    print "Reverse shell uploaded successfully"
+    // Make it executable
+    get_shell.launch("/bin/chmod", "+x /root/Downloads/reverse_shell")
+else
+    print "Failed to upload reverse shell"
+end if
+
+// Upload libraries
+metax_result = upload_shell.scp("/lib/metaxploit.so", "/root/Downloads", local_shell)
+if metax_result then
+    print "Metaxploit library uploaded successfully"
+else
+    print "Failed to upload metaxploit.so"
+end if
+```
+
 ### Remote/Local Script Architecture:
 ```greyscript
 // IMPORTANT: crypto.so can only be loaded where script executes!
 // For remote operations, split into local command execution:
 
 // On compromised machine (steal.src):
-// 1. Download files to attack node
-// 2. Launch local command via remote shell
+// 1. Upload tools from attack node
+// 2. Download files to attack node
+// 3. Launch local command via remote shell
 crack_shell = get_shell.connect_service(attack_ip, 22, user, pass)
 crack_result = crack_shell.launch("/usr/bin/crack")
 
