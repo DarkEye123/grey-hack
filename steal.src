@@ -298,47 +298,38 @@ for user_folder in user_folders
 
 		print "  Found target file: " + relative_path
 
-		// Read file content from target
-		print "    Reading file content..."
-		file_content = file.get_content
-		if file_content then
-			print "    Content read: " + file_content.len + " characters"
+		// Create subdirectory structure on attack node if needed
+		target_file_path = user_target_path + "/" + relative_path
 
-			// Create subdirectory structure on attack node if needed
-			target_file_path = user_target_path + "/" + relative_path
+		if relative_path.indexOf("/") != null then
+			// File is in subdirectory, get directory part
+			path_parts = relative_path.split("/")
+			file_name_only = path_parts[-1]
 
-			if relative_path.indexOf("/") != null then
-				// File is in subdirectory, get directory part
-				path_parts = relative_path.split("/")
-				file_name_only = path_parts[-1]
+			// Build directory path step by step
+			current_path = user_target_path
+			i = 0
+			while i < path_parts.len - 1
+				folder_name = path_parts[i]
+				safe_create_folder user_comp, current_path, folder_name
+				current_path = current_path + "/" + folder_name
+				i = i + 1
+			end while
 
-				// Build directory path step by step
-				current_path = user_target_path
-				i = 0
-				while i < path_parts.len - 1
-					folder_name = path_parts[i]
-					safe_create_folder user_comp, current_path, folder_name
-					current_path = current_path + "/" + folder_name
-					i = i + 1
-				end while
-
-				// Create file in final directory
-				attack_file = safe_touch(user_comp, current_path, file_name_only)
-			else
-				// File is directly in user home
-				attack_file = safe_touch(user_comp, user_target_path, file_name)
-			end if
-
-			if attack_file then
-				print "    Setting file content..."
-				attack_file.set_content file_content
-				downloaded_files.push target_file_path
-				print "    Downloaded successfully: " + relative_path
-			else
-				print "    ERROR: Failed to create file on attack node: " + relative_path
-			end if
+			// Transfer file using SCP to final directory
+			print "    Transferring via SCP..."
+			scp_result = get_shell.scp(file_path, current_path, user_shell)
 		else
-			print "    ERROR: Failed to read file content from: " + relative_path
+			// Transfer file using SCP directly to user directory
+			print "    Transferring via SCP..."
+			scp_result = get_shell.scp(file_path, user_target_path, user_shell)
+		end if
+
+		if scp_result then
+			downloaded_files.push target_file_path
+			print "    Downloaded successfully via SCP: " + relative_path
+		else
+			print "    ERROR: SCP transfer failed for: " + relative_path
 		end if
 	end for
 
